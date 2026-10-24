@@ -1,7 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { 
-  Play, Pause, RotateCcw, Upload, Sparkles, CheckCircle2, 
-  Clock, Users, FileText, ChevronRight, Volume2, Plus, AlertCircle 
+  Play, Pause, Upload, Sparkles, CheckCircle2, 
+  FileText, Trash2, ArrowRightCircle, ListChecks, Check
 } from "lucide-react";
 
 export default function App() {
@@ -24,6 +24,8 @@ export default function App() {
       setMeetings(data);
       if (data.length > 0) {
         loadMeeting(data[0].id);
+      } else {
+        setActiveMeeting(null);
       }
     } catch (e) {
       console.log("Waiting for backend...");
@@ -39,6 +41,29 @@ export default function App() {
       setIsPlaying(false);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleDeleteMeeting = async (e, id) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to permanently delete this meeting record?")) return;
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/meetings/${id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        const remaining = meetings.filter((m) => m.id !== id);
+        setMeetings(remaining);
+        if (activeMeeting?.id === id) {
+          if (remaining.length > 0) {
+            loadMeeting(remaining[0].id);
+          } else {
+            setActiveMeeting(null);
+          }
+        }
+      }
+    } catch (err) {
+      alert("Failed to delete meeting.");
     }
   };
 
@@ -136,7 +161,7 @@ export default function App() {
 
       {/* Main Container */}
       <div className="flex-1 flex overflow-hidden">
-        {/* Left Sidebar: Meetings List */}
+        {/* Left Sidebar: Local Meeting History & Deletion */}
         <aside className="w-72 border-r border-zinc-800/80 bg-zinc-950/40 p-4 flex flex-col space-y-3">
           <div className="flex items-center justify-between text-xs font-semibold text-zinc-400 px-1 uppercase tracking-wider">
             <span>Local Meetings ({meetings.length})</span>
@@ -144,28 +169,37 @@ export default function App() {
 
           <div className="flex-1 overflow-y-auto space-y-2 pr-1">
             {meetings.map((m) => (
-              <button
+              <div
                 key={m.id}
                 onClick={() => loadMeeting(m.id)}
-                className={`w-full text-left p-3 rounded-xl border transition group ${
+                className={`relative w-full text-left p-3 rounded-xl border transition cursor-pointer group ${
                   activeMeeting?.id === m.id
                     ? "bg-amber-500/10 border-amber-500/40 text-amber-200"
                     : "bg-zinc-900/50 border-zinc-800/60 hover:bg-zinc-800/50 text-zinc-300"
                 }`}
               >
-                <div className="font-semibold text-sm truncate group-hover:text-amber-400 transition">
-                  {m.title}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="font-semibold text-sm truncate group-hover:text-amber-400 transition pr-2">
+                    {m.title}
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteMeeting(e, m.id)}
+                    className="opacity-0 group-hover:opacity-100 hover:text-rose-400 text-zinc-500 p-1 rounded transition"
+                    title="Delete meeting"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
                 <div className="flex items-center justify-between text-[11px] text-zinc-500 mt-2 font-mono">
                   <span>{m.duration || "Recorded"}</span>
                   <span className="text-emerald-400/80">{m.status || "Ready"}</span>
                 </div>
-              </button>
+              </div>
             ))}
 
             {meetings.length === 0 && (
               <div className="text-center p-6 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-xs">
-                No meetings recorded yet. Click "Load Demo Meeting" to see BlackBox AI in action!
+                No meetings recorded yet. Click "Load Demo Meeting" or upload an audio file to begin.
               </div>
             )}
           </div>
@@ -174,12 +208,12 @@ export default function App() {
         {/* Center / Right Content */}
         {activeMeeting ? (
           <main className="flex-1 flex flex-col overflow-hidden bg-zinc-950/20">
-            {/* Audio Waveform Scrubber Header */}
+            {/* Interactive Audio Player & Waveform Scrubber */}
             <div className="border-b border-zinc-800/80 bg-zinc-900/40 p-5 backdrop-blur-sm">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-bold text-white tracking-tight">{activeMeeting.title}</h1>
-                  <p className="text-xs text-zinc-400 mt-0.5">Processed entirely in-memory with local privacy controls.</p>
+                  <p className="text-xs text-zinc-400 mt-0.5">Processed entirely on-device with local privacy controls.</p>
                 </div>
 
                 {/* Speed Controls */}
@@ -200,7 +234,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Scrubber & Player */}
+              {/* Scrubber & Player Controls */}
               <div className="mt-4 bg-zinc-950/80 border border-zinc-800/80 rounded-xl p-3 flex items-center space-x-4">
                 <button
                   onClick={togglePlay}
@@ -242,7 +276,7 @@ export default function App() {
 
             {/* Split View */}
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-              {/* Transcript */}
+              {/* Speaker Diarized Transcript (Jump to Audio) */}
               <div className="lg:col-span-7 border-r border-zinc-800/80 flex flex-col overflow-hidden">
                 <div className="p-3.5 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center justify-between">
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center">
@@ -278,7 +312,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* AI Insights Matrix */}
+              {/* Gemma 4 Meeting Intelligence Columns */}
               <div className="lg:col-span-5 flex flex-col overflow-hidden bg-zinc-950/40">
                 <div className="p-3.5 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center justify-between">
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center">
@@ -288,61 +322,81 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-5 space-y-6">
-                  {/* Executive Summary */}
+                  {/* Executive Summary & Key Takeaways */}
                   <div>
                     <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
-                      Executive Summary
+                      Executive Summary & Key Takeaways
                     </h3>
-                    <div className="bg-zinc-900/70 border border-zinc-800 p-4 rounded-xl text-sm leading-relaxed text-zinc-200">
-                      {activeMeeting.analysis?.executive_summary || "No summary generated."}
+                    <div className="bg-zinc-900/70 border border-zinc-800 p-4 rounded-xl text-sm leading-relaxed text-zinc-200 space-y-3">
+                      <p>{activeMeeting.analysis?.executive_summary || "No executive summary generated."}</p>
+                      
+                      {activeMeeting.analysis?.key_takeaways?.length > 0 && (
+                        <div className="pt-2 border-t border-zinc-800/80 space-y-1.5">
+                          <span className="text-[11px] font-mono text-amber-400/80 uppercase tracking-wider font-semibold">Highlights</span>
+                          {activeMeeting.analysis.key_takeaways.map((point, idx) => (
+                            <div key={idx} className="flex items-start space-x-2 text-xs text-zinc-300">
+                              <span className="text-amber-400 font-bold">•</span>
+                              <span>{point}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Action Items Matrix */}
                   <div>
-                    <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
+                    <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold flex items-center">
+                      <ListChecks className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
                       Action Items Matrix
                     </h3>
                     <div className="space-y-2">
                       {activeMeeting.analysis?.action_items?.map((act, i) => (
-                        <div key={i} className="bg-zinc-900/60 border border-zinc-800/80 p-3 rounded-xl flex items-start justify-between gap-3">
-                          <div className="space-y-1">
-                            <p className="text-sm font-medium text-zinc-100">{act.task}</p>
-                            <div className="flex items-center space-x-3 text-xs text-zinc-400">
-                              <span>👤 {act.owner}</span>
-                              <span>⏳ {act.deadline}</span>
-                            </div>
+                        <div key={i} className="bg-zinc-900/60 border border-zinc-800/80 p-3.5 rounded-xl space-y-2">
+                          <p className="text-sm font-medium text-zinc-100">{act.task}</p>
+                          <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-400 font-mono">
+                            <span className="bg-zinc-800/60 px-2 py-0.5 rounded text-zinc-300">👤 {act.owner || "Unassigned"}</span>
+                            <span className="bg-zinc-800/60 px-2 py-0.5 rounded text-zinc-300">⏳ {act.deadline || "TBD"}</span>
+                            {act.priority && (
+                              <span className="text-amber-400/90 font-medium">📌 Priority: {act.priority}</span>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
 
-                  {/* Key Decisions */}
+                  {/* Key Decisions & Agreed Next Steps */}
                   <div>
                     <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
-                      Key Decisions Consensus
+                      Key Decisions & Agreed Next Steps
                     </h3>
-                    <ul className="space-y-2">
+                    <div className="space-y-2">
                       {activeMeeting.analysis?.key_decisions?.map((dec, i) => (
-                        <li key={i} className="flex items-start space-x-2 text-xs text-zinc-300 bg-zinc-900/40 p-2.5 rounded-lg border border-zinc-800/60">
+                        <div key={i} className="flex items-start space-x-2.5 text-xs text-zinc-300 bg-zinc-900/40 p-2.5 rounded-lg border border-zinc-800/60">
                           <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
                           <span>{dec}</span>
-                        </li>
+                        </div>
                       ))}
-                    </ul>
+                      {activeMeeting.analysis?.agreed_next_steps?.map((step, i) => (
+                        <div key={i} className="flex items-start space-x-2.5 text-xs text-zinc-300 bg-zinc-900/30 p-2.5 rounded-lg border border-zinc-800/40">
+                          <ArrowRightCircle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                          <span>{step}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
-                  {/* Speaker Analytics */}
+                  {/* Speaker Analytics & Sentiment Insights */}
                   <div>
                     <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
-                      Speaker Talk-Time Distribution
+                      Speaker Insights & Talk-Time Analytics
                     </h3>
                     <div className="space-y-3 bg-zinc-900/40 p-3.5 rounded-xl border border-zinc-800/60">
                       {activeMeeting.analysis?.speaker_analytics?.map((spk, i) => (
                         <div key={i} className="space-y-1">
                           <div className="flex justify-between text-xs font-mono">
-                            <span className="text-zinc-300">{spk.speaker} ({spk.sentiment})</span>
+                            <span className="text-zinc-300">{spk.speaker} ({spk.sentiment || "Neutral"})</span>
                             <span className="text-amber-400 font-bold">{spk.talk_percentage}%</span>
                           </div>
                           <div className="w-full bg-zinc-800 h-2 rounded-full overflow-hidden">
@@ -361,7 +415,7 @@ export default function App() {
           </main>
         ) : (
           <div className="flex-1 flex items-center justify-center text-zinc-500">
-            Select a meeting or load demo.
+            No meeting selected. Choose a meeting from the sidebar or record audio.
           </div>
         )}
       </div>
