@@ -1,8 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { 
-  ShieldCheck, Zap, HardDrive, Lock, Play, Pause, RotateCcw, 
-  Upload, Sparkles, CheckCircle2, Clock, Users, FileText, 
-  ChevronRight, Volume2, Plus, AlertCircle 
+  Play, Pause, RotateCcw, Upload, Sparkles, CheckCircle2, 
+  Clock, Users, FileText, ChevronRight, Volume2, Plus, AlertCircle 
 } from "lucide-react";
 
 export default function App() {
@@ -11,7 +10,6 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
-  const [activeTab, setActiveTab] = useState("transcript");
   const [isUploading, setIsUploading] = useState(false);
   const audioRef = useRef(null);
 
@@ -114,28 +112,12 @@ export default function App() {
             🦦
           </div>
           <div>
-            <div className="flex items-center space-x-2">
-              <span className="font-extrabold tracking-tight text-white text-lg">BLACKBOX AI</span>
-              <span className="text-[10px] uppercase font-mono tracking-widest bg-amber-500/10 text-amber-400 border border-amber-500/30 px-2 py-0.5 rounded-full">
-                100% On-Device
-              </span>
-            </div>
-            <p className="text-xs text-zinc-400 hidden sm:block">Faster-Whisper ASR • Gemma 4 via Ollama • Local SQLite</p>
+            <span className="font-extrabold tracking-tight text-white text-lg">BLACKBOX AI</span>
           </div>
         </div>
 
-        {/* System Badges & Actions */}
+        {/* Action Buttons */}
         <div className="flex items-center space-x-3">
-          <div className="hidden md:flex items-center space-x-4 bg-zinc-900/90 border border-zinc-800 px-3 py-1.5 rounded-lg text-xs font-mono">
-            <span className="flex items-center text-emerald-400">
-              <ShieldCheck className="w-3.5 h-3.5 mr-1" /> 0 Cloud Uploads
-            </span>
-            <span className="text-zinc-600">|</span>
-            <span className="flex items-center text-amber-400">
-              <Lock className="w-3.5 h-3.5 mr-1" /> 100% Local
-            </span>
-          </div>
-
           <button 
             onClick={handleCreateDemo} 
             className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 py-2 rounded-lg font-medium transition flex items-center space-x-1.5 border border-zinc-700"
@@ -200,7 +182,7 @@ export default function App() {
                   <p className="text-xs text-zinc-400 mt-0.5">Processed entirely in-memory with local privacy controls.</p>
                 </div>
 
-                {/* Speed Controls & Jump */}
+                {/* Speed Controls */}
                 <div className="flex items-center space-x-2 bg-zinc-900 border border-zinc-800 rounded-lg p-1">
                   {[1, 1.25, 1.5, 2].map((spd) => (
                     <button
@@ -227,7 +209,7 @@ export default function App() {
                   {isPlaying ? <Pause className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current ml-0.5" />}
                 </button>
 
-                {/* Simulated Waveform Visualizer */}
+                {/* Waveform Visualizer */}
                 <div className="flex-1 flex items-center space-x-1 h-8 overflow-hidden">
                   {Array.from({ length: 48 }).map((_, idx) => {
                     const heightPercent = 20 + Math.sin(idx * 0.4) * 40 + (idx % 3) * 15;
@@ -250,7 +232,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Hidden HTML5 Audio Element for real playback */}
               <audio
                 ref={audioRef}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
@@ -259,9 +240,9 @@ export default function App() {
               />
             </div>
 
-            {/* Split View: Transcript (Left) + AI Insights Matrix (Right) */}
+            {/* Split View */}
             <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-              {/* Transcript Column (7 cols) */}
+              {/* Transcript */}
               <div className="lg:col-span-7 border-r border-zinc-800/80 flex flex-col overflow-hidden">
                 <div className="p-3.5 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center justify-between">
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center">
@@ -297,15 +278,12 @@ export default function App() {
                 </div>
               </div>
 
-              {/* AI Intelligence Column: Gemma 4 via Ollama (5 cols) */}
+              {/* AI Insights Matrix */}
               <div className="lg:col-span-5 flex flex-col overflow-hidden bg-zinc-950/40">
                 <div className="p-3.5 border-b border-zinc-800/80 bg-zinc-900/30 flex items-center justify-between">
                   <span className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center">
                     <Sparkles className="w-3.5 h-3.5 mr-1.5 text-amber-400" />
                     Gemma 4 Meeting Intelligence
-                  </span>
-                  <span className="text-[10px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono">
-                    Local LLM
                   </span>
                 </div>
 
@@ -362,7 +340,7 @@ export default function App() {
                     </ul>
                   </div>
 
-                  {/* Speaker Talk-Time Distribution */}
+                  {/* Speaker Analytics */}
                   <div>
                     <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
                       Speaker Talk-Time Distribution
@@ -385,7 +363,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Topics Extracted */}
+                  {/* Topics */}
                   <div>
                     <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
                       Indexed Topics
