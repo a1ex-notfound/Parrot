@@ -1,0 +1,11 @@
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+venv/
+backend/venv/
+__pycache__/
+*.pyc
+.env
+backend/meetings.db
+backend/uploads/*
