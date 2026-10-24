@@ -1,7 +1,7 @@
 ﻿import os
+import re
 import json
 import sqlite3
-import shutil
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,12 +20,31 @@ app.add_middleware(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BASE_DIR)
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 DB_PATH = os.path.join(BASE_DIR, "meetings.db")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+# Load environment configuration
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-MODEL_ID = "google/gemma-2-9b-it"
+MODEL_ID = os.environ.get("MODEL_ID", "google/gemma-2-9b-it")
+
+for env_path in [os.path.join(PROJECT_ROOT, ".env"), os.path.join(BASE_DIR, ".env")]:
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    if k.strip() == "OPENROUTER_API_KEY" and not OPENROUTER_API_KEY:
+                        OPENROUTER_API_KEY = v.strip().strip("'").strip('"')
+                    if k.strip() == "MODEL_ID":
+                        MODEL_ID = v.strip().strip("'").strip('"')
+
+if OPENROUTER_API_KEY:
+    print(f">>> [Config] OpenRouter Key Loaded! Model: {MODEL_ID}")
+else:
+    print(">>> [Config Warning] OPENROUTER_API_KEY is not set in .env")
 
 print(">>> Initializing Faster-Whisper base model on CPU...")
 whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
@@ -53,46 +72,53 @@ init_db()
 
 def query_openrouter_gemma(transcript_text: str):
     if not OPENROUTER_API_KEY:
-        return get_fallback_analysis(transcript_text)
+        print(">>> [Gemma Skipped] No OpenRouter API key found in .env.")
+        return get_dynamic_fallback(transcript_text)
 
-    prompt = f"""You are an expert executive meeting intelligence assistant.
-Analyze the following meeting transcript and produce a highly structured JSON report.
-Strictly adhere to this JSON structure without adding markdown code blocks:
+    print(f">>> [Gemma 4] Sending transcript ({len(transcript_text)} characters) to OpenRouter ({MODEL_ID})...")
+
+    prompt = f"""You are an executive meeting intelligence analyst.
+Analyze the following transcript carefully. Extract true, context-aware information directly based on what the speakers actually discussed.
+Output strictly a valid JSON object matching this exact schema:
 
 {{
-  "executive_summary": "2-3 concise sentences summarizing the primary purpose and conclusion of the meeting.",
+  "executive_summary": "A cohesive 2-3 sentence overview explaining the central subject and what the speakers talked about.",
   "key_takeaways": [
-    "Takeaway 1 highlighting major insight",
-    "Takeaway 2 highlighting major insight"
-  ],
-  "key_decisions": [
-    "Confirmed consensus or decision point 1",
-    "Confirmed consensus or decision point 2"
-  ],
-  "agreed_next_steps": [
-    "Immediate next step 1",
-    "Immediate next step 2"
+    "Key observation or fact directly mentioned in the conversation",
+    "Another critical highlight from what was said"
   ],
   "action_items": [
     {{
-      "task": "Specific actionable item",
-      "owner": "Assignee name or 'Unassigned'",
-      "deadline": "Stated deadline or 'Not specified'",
-      "priority": "High | Medium | Low"
+      "task": "Explicit follow-up task or project discussed",
+      "owner": "Specific speaker/entity or 'Host'",
+      "deadline": "Timeframe mentioned or 'Ongoing'",
+      "priority": "High"
     }}
+  ],
+  "key_decisions": [
+    "Core decision, announcement, or agreed consensus from the talk"
+  ],
+  "agreed_next_steps": [
+    "Next immediate step or future plan mentioned by the speakers"
   ],
   "speaker_analytics": [
     {{
-      "speaker": "Speaker label",
-      "talk_percentage": 60,
-      "sentiment": "e.g., Assertive, Collaborative, Inquisitive"
+      "speaker": "Speaker 1",
+      "talk_percentage": 50,
+      "sentiment": "e.g., Enthusiastic, Reflective, Inquisitive, or Professional"
+    }},
+    {{
+      "speaker": "Speaker 2",
+      "talk_percentage": 50,
+      "sentiment": "e.g., Enthusiastic, Grateful, or Expressive"
     }}
   ]
 }}
 
-Transcript:
+Transcript to analyze:
 \"\"\"{transcript_text}\"\"\"
 """
+
     try:
         res = requests.post(
             "https://openrouter.ai/api/v1/chat/completions",
@@ -107,48 +133,53 @@ Transcript:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a specialized meeting analyst. You output purely valid JSON with no conversational text or markdown code blocks."
+                        "content": "You are a professional meeting analysis AI. You must respond ONLY with a raw JSON object. Do not output conversational text or markdown explanation."
                     },
                     {"role": "user", "content": prompt}
-                ],
-                "response_format": {"type": "json_object"}
+                ]
             },
-            timeout=45
+            timeout=60
         )
+
         if res.status_code == 200:
-            raw = res.json()["choices"][0]["message"]["content"].strip()
-            if raw.startswith("```json"):
-                raw = raw[7:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            return json.loads(raw.strip())
+            data = res.json()
+            raw = data["choices"][0]["message"]["content"].strip()
+            
+            # Extract JSON cleanly using regex
+            json_match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if json_match:
+                parsed = json.loads(json_match.group(0))
+                print(">>> [Gemma 4] Meeting intelligence successfully generated from real transcript!")
+                return parsed
+            else:
+                print(f">>> [Gemma 4 Format Error] Could not parse JSON from output: {raw[:200]}")
+        else:
+            print(f">>> [OpenRouter Error] HTTP {res.status_code}: {res.text}")
     except Exception as e:
-        print(f"[OpenRouter Error] {e}")
+        print(f">>> [OpenRouter Request Failed] {e}")
 
-    return get_fallback_analysis(transcript_text)
+    return get_dynamic_fallback(transcript_text)
 
-def get_fallback_analysis(transcript_text):
+def get_dynamic_fallback(transcript_text):
+    sample = transcript_text[:120].strip() if transcript_text else "No speech content"
     return {
-        "executive_summary": f"Meeting conversation transcribed on-device with privacy-first execution. Preview: {transcript_text[:140]}...",
+        "executive_summary": f"Discussion recorded: \"{sample}...\". Context captured on-device.",
         "key_takeaways": [
-            "Local audio transcription completed without external cloud relay.",
-            "Meeting intelligence parsed using offline-first principles."
-        ],
-        "key_decisions": [
-            "Local Faster-Whisper pipeline validated for speech-to-text.",
-            "Meeting history and audio securely encrypted and retained in local SQLite."
-        ],
-        "agreed_next_steps": [
-            "Review action item distribution with respective owners.",
-            "Verify speech diarization time offsets in transcript."
+            "Local audio captured with Faster-Whisper ASR.",
+            "Please check OpenRouter API key or model availability in backend terminal."
         ],
         "action_items": [
-            {"task": "Verify timestamp alignment in transcript", "owner": "Alex", "deadline": "This week", "priority": "High"},
-            {"task": "Confirm local SQLite backup routine", "owner": "Team", "deadline": "Sprint end", "priority": "Medium"}
+            {"task": "Verify OpenRouter API connectivity in backend", "owner": "Admin", "deadline": "Immediate", "priority": "High"}
+        ],
+        "key_decisions": [
+            "100% on-device speech transcription verified."
+        ],
+        "agreed_next_steps": [
+            "Click 'Re-analyze with Gemma' to retry intelligence generation."
         ],
         "speaker_analytics": [
-            {"speaker": "Speaker 1", "talk_percentage": 65, "sentiment": "Decisive & Structured"},
-            {"speaker": "Speaker 2", "talk_percentage": 35, "sentiment": "Supportive"}
+            {"speaker": "Speaker 1", "talk_percentage": 50, "sentiment": "Recorded"},
+            {"speaker": "Speaker 2", "talk_percentage": 50, "sentiment": "Recorded"}
         ]
     }
 
@@ -181,6 +212,28 @@ def get_meeting(meeting_id: str):
         "status": r[7]
     }
 
+@app.post("/api/meetings/{meeting_id}/reanalyze")
+def reanalyze_meeting(meeting_id: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT transcript_json FROM meetings WHERE id=?", (meeting_id,))
+    row = c.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Meeting not found")
+    
+    transcript = json.loads(row[0] or "[]")
+    full_text = " ".join([t.get("text", "") for t in transcript]).strip()
+    if not full_text:
+        conn.close()
+        raise HTTPException(status_code=400, detail="Transcript is empty")
+    
+    analysis = query_openrouter_gemma(full_text)
+    c.execute("UPDATE meetings SET summary_json=? WHERE id=?", (json.dumps(analysis), meeting_id))
+    conn.commit()
+    conn.close()
+    return {"id": meeting_id, "analysis": analysis}
+
 @app.delete("/api/meetings/{meeting_id}")
 def delete_meeting(meeting_id: str):
     conn = sqlite3.connect(DB_PATH)
@@ -190,8 +243,6 @@ def delete_meeting(meeting_id: str):
     if not row:
         conn.close()
         raise HTTPException(status_code=404, detail="Meeting not found")
-    
-    # Clean local audio file if present
     if row[0]:
         audio_path = os.path.join(UPLOAD_DIR, row[0])
         if os.path.exists(audio_path):
@@ -199,7 +250,6 @@ def delete_meeting(meeting_id: str):
                 os.remove(audio_path)
             except Exception:
                 pass
-
     c.execute("DELETE FROM meetings WHERE id=?", (meeting_id,))
     conn.commit()
     conn.close()
@@ -213,30 +263,41 @@ def stream_audio(filename: str):
     raise HTTPException(status_code=404, detail="File not found")
 
 @app.post("/api/upload")
-async def upload_audio(file: UploadFile = File(...), title: Optional[str] = Form("Meeting Audio")):
+async def upload_audio(file: UploadFile = File(...), title: Optional[str] = Form("Meeting Recording")):
+    content = await file.read()
+    if not content or len(content) < 500:
+        raise HTTPException(status_code=400, detail="Audio file is empty or corrupted.")
+
     meeting_id = "rec-" + os.urandom(3).hex()
-    safe_name = f"{meeting_id}_{file.filename}"
+    clean_original = re.sub(r"[^a-zA-Z0-9_.-]", "_", file.filename)
+    safe_name = f"{meeting_id}_{clean_original}"
     file_path = os.path.join(UPLOAD_DIR, safe_name)
 
     with open(file_path, "wb") as buf:
-        shutil.copyfileobj(file.file, buf)
+        buf.write(content)
 
-    print(f">>> Transcribing {safe_name} with Faster-Whisper...")
-    segments, info = whisper_model.transcribe(file_path, beam_size=5)
-    transcript = [
-        {
-            "start": round(s.start, 2),
-            "end": round(s.end, 2),
-            "speaker": f"Speaker {(idx % 2) + 1}",
-            "text": s.text.strip()
-        }
-        for idx, s in enumerate(segments)
-    ]
+    print(f">>> Transcribing {safe_name} ({len(content)} bytes) with Faster-Whisper...")
+    try:
+        segments, info = whisper_model.transcribe(file_path, beam_size=5)
+        transcript = [
+            {
+                "start": round(s.start, 2),
+                "end": round(s.end, 2),
+                "speaker": f"Speaker {(idx % 2) + 1}",
+                "text": s.text.strip()
+            }
+            for idx, s in enumerate(segments)
+        ]
+        duration_str = f"{int(info.duration // 60)}:{int(info.duration % 60):02d}"
+    except Exception as err:
+        print(f">>> [Audio Transcribe Error] {err}")
+        if os.path.exists(file_path):
+            try: os.remove(file_path)
+            except: pass
+        raise HTTPException(status_code=400, detail="Invalid audio file. Please upload a standard MP3, WAV, or record via mic.")
 
-    full_text = " ".join([s["text"] for s in transcript]) if transcript else "No speech detected in audio."
-    duration_str = f"{int(info.duration // 60)}:{int(info.duration % 60):02d}"
-
-    print(f">>> Transcription complete ({duration_str}). Requesting Gemma analysis...")
+    full_text = " ".join([s["text"] for s in transcript]) if transcript else "No audible speech detected."
+    print(f">>> Transcription complete ({duration_str}). Requesting Gemma intelligence...")
     analysis = query_openrouter_gemma(full_text)
 
     conn = sqlite3.connect(DB_PATH)
@@ -254,9 +315,9 @@ async def upload_audio(file: UploadFile = File(...), title: Optional[str] = Form
 def create_demo():
     demo_id = "demo-" + os.urandom(3).hex()
     transcript = [
-        {"start": 0.0, "end": 4.5, "speaker": "Speaker 1 (Alex)", "text": "Welcome everyone. BlackBox AI operates 100% on-device for total privacy."},
-        {"start": 5.0, "end": 9.8, "speaker": "Speaker 2 (Sarah)", "text": "Faster-Whisper handles speech-to-text without cloud relays, keeping audio confidential."},
-        {"start": 10.2, "end": 16.5, "speaker": "Speaker 1 (Alex)", "text": "Consensus reached: Gemma 4 via OpenRouter structures all action items, decisions, and next steps."}
+        {"start": 0.0, "end": 4.5, "speaker": "Speaker 1 (Alex)", "text": "Welcome to the BlackBox AI demo. Today we confirm zero cloud uploads and local processing."},
+        {"start": 5.0, "end": 9.8, "speaker": "Speaker 2 (Sarah)", "text": "Faster-Whisper runs on local CPU, while Gemma models structure meeting actions and decisions."},
+        {"start": 10.2, "end": 16.5, "speaker": "Speaker 1 (Alex)", "text": "Agreed: Alex verifies timestamp sync by Friday, and engineering secures the local SQLite database."}
     ]
     analysis = query_openrouter_gemma(" ".join([t["text"] for t in transcript]))
     conn = sqlite3.connect(DB_PATH)
@@ -264,7 +325,7 @@ def create_demo():
     c.execute("""
         INSERT INTO meetings (id, title, audio_filename, duration, transcript_json, summary_json, status)
         VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (demo_id, "BlackBox AI Architecture Sync", "demo.mp3", "0:17", json.dumps(transcript), json.dumps(analysis), "Processed"))
+    """, (demo_id, "BlackBox AI Product Launch & Sync", "demo.mp3", "0:17", json.dumps(transcript), json.dumps(analysis), "Processed"))
     conn.commit()
     conn.close()
     return {"id": demo_id, "status": "Processed"}

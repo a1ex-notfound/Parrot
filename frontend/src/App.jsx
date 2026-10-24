@@ -2,7 +2,7 @@
 import { 
   Play, Pause, Upload, Sparkles, CheckCircle2, 
   FileText, Trash2, ArrowRightCircle, ListChecks, Mic, Square, 
-  Lightbulb, UserCheck, Clock, Plus, Folder, Hash, ArrowUpRight
+  RefreshCw, UserCheck, Folder
 } from "lucide-react";
 
 export default function App() {
@@ -12,6 +12,7 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isReanalyzing, setIsReanalyzing] = useState(false);
   
   // Microphone recording
   const [isRecording, setIsRecording] = useState(false);
@@ -50,6 +51,23 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleReanalyze = async () => {
+    if (!activeMeeting) return;
+    setIsReanalyzing(true);
+    try {
+      const res = await fetch(`http://127.0.0.1:8000/api/meetings/${activeMeeting.id}/reanalyze`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Re-analysis failed");
+      setActiveMeeting({ ...activeMeeting, analysis: data.analysis });
+    } catch (err) {
+      alert("Gemma re-analysis failed: " + err.message);
+    } finally {
+      setIsReanalyzing(false);
     }
   };
 
@@ -192,13 +210,12 @@ export default function App() {
 
   const analysis = activeMeeting?.analysis || {};
 
-  // Color mapping for collection folder tabs
   const folderColors = [
-    { bg: "bg-[#4ADE80]", border: "border-black", text: "text-black" }, // Mint Green
-    { bg: "bg-[#F472B6]", border: "border-black", text: "text-black" }, // Pink
-    { bg: "bg-[#C084FC]", border: "border-black", text: "text-black" }, // Purple
-    { bg: "bg-[#FDE047]", border: "border-black", text: "text-black" }, // Yellow
-    { bg: "bg-[#38BDF8]", border: "border-black", text: "text-black" }, // Sky
+    { bg: "bg-[#4ADE80]" }, // Mint Green
+    { bg: "bg-[#F472B6]" }, // Pink
+    { bg: "bg-[#C084FC]" }, // Purple
+    { bg: "bg-[#FDE047]" }, // Yellow
+    { bg: "bg-[#38BDF8]" }, // Sky
   ];
 
   return (
@@ -208,7 +225,6 @@ export default function App() {
       <div className="absolute top-12 left-[-40px] w-32 h-32 rounded-full bg-[#F472B6] border-[3px] border-black -z-10 pointer-events-none" />
       <div className="absolute bottom-16 right-[-20px] w-48 h-64 rounded-3xl bg-[#C084FC] border-[3px] border-black -z-10 pointer-events-none" />
 
-      {/* Main Neo-Brutalist Container Canvas */}
       <div className="max-w-7xl w-full mx-auto flex-1 flex flex-col">
         
         {/* Top Navbar Card */}
@@ -223,7 +239,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Action Buttons with Neo-Brutalist Pop */}
           <div className="flex items-center gap-3">
             {!isRecording ? (
               <button
@@ -268,7 +283,7 @@ export default function App() {
           </div>
         </header>
 
-        {/* Hero Title - Inspired by Tuckii "Save now. Find anytime." */}
+        {/* Hero Title */}
         <div className="mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <div>
             <h2 className="text-4xl md:text-5xl font-black tracking-tight leading-none text-black">
@@ -288,7 +303,7 @@ export default function App() {
         {/* Workspace Layout */}
         <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
-          {/* Left Column: Tuckii-style Folder Collection Cards (Local Meetings) */}
+          {/* Left Column: Meetings List */}
           <aside className="lg:col-span-4 flex flex-col space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-black uppercase tracking-tight flex items-center">
@@ -310,12 +325,10 @@ export default function App() {
                       isActive ? "translate-x-1 -translate-y-1" : "hover:-translate-y-0.5"
                     }`}
                   >
-                    {/* Top Folder Tab */}
                     <div className="flex items-end pl-3">
                       <div className={`h-4 w-24 ${colorScheme.bg} border-t-[2.5px] border-l-[2.5px] border-r-[2.5px] border-black rounded-t-lg`} />
                     </div>
 
-                    {/* Card Body */}
                     <div className={`bg-white border-[2.5px] border-black rounded-2xl p-4 shadow-[4px_4px_0px_#000] ${
                       isActive ? "ring-2 ring-black bg-[#FFFBEB]" : ""
                     }`}>
@@ -356,11 +369,11 @@ export default function App() {
             </div>
           </aside>
 
-          {/* Right Column: Audio Scrubber, Transcript & Gemma 4 Insights */}
+          {/* Right Column: Audio Scrubber & Gemma 4 Insights */}
           <main className="lg:col-span-8 flex flex-col space-y-6">
             {activeMeeting ? (
               <>
-                {/* Neo-Brutalist Audio Player Bar */}
+                {/* Audio Player Bar */}
                 <div className="bg-white border-[3px] border-black rounded-2xl shadow-[5px_5px_0px_#000] p-5">
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b-[2px] border-black">
                     <div>
@@ -370,7 +383,7 @@ export default function App() {
                       <h3 className="text-xl font-black text-black tracking-tight mt-1">{activeMeeting.title}</h3>
                     </div>
 
-                    {/* Speed Selector Pills */}
+                    {/* Speed Controls */}
                     <div className="flex items-center space-x-1.5 bg-[#FEF08A] border-[2px] border-black rounded-xl p-1 shadow-[2px_2px_0px_#000]">
                       {[1, 1.25, 1.5, 2].map((spd) => (
                         <button
@@ -430,7 +443,7 @@ export default function App() {
                 {/* Split: Transcript (Left) + Gemma Intelligence (Right) */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   
-                  {/* Folder Card: Timestamped Transcript */}
+                  {/* Diarized Transcript */}
                   <div className="flex flex-col">
                     <div className="flex items-end pl-3">
                       <div className="h-4 w-28 bg-[#38BDF8] border-t-[2.5px] border-l-[2.5px] border-r-[2.5px] border-black rounded-t-lg" />
@@ -472,14 +485,26 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Folder Card: Gemma 4 Meeting Intelligence */}
+                  {/* Gemma Intelligence Suite */}
                   <div className="flex flex-col space-y-6">
                     
                     {/* Executive Summary & Takeaways */}
                     <div>
-                      <div className="flex items-end pl-3">
+                      <div className="flex items-end justify-between pl-3 pr-1">
                         <div className="h-4 w-32 bg-[#F472B6] border-t-[2.5px] border-l-[2.5px] border-r-[2.5px] border-black rounded-t-lg" />
+                        
+                        {/* Re-analyze Button */}
+                        <button
+                          onClick={handleReanalyze}
+                          disabled={isReanalyzing}
+                          className="bg-black text-[#FDE047] hover:bg-zinc-800 border-[2px] border-black px-2.5 py-0.5 rounded-t-lg font-black text-[10px] uppercase flex items-center space-x-1 tracking-wider shadow-[2px_0px_0px_#000]"
+                          title="Generate fresh Gemma intelligence directly from transcript"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${isReanalyzing ? "animate-spin" : ""}`} />
+                          <span>{isReanalyzing ? "Analyzing..." : "Re-run Gemma AI"}</span>
+                        </button>
                       </div>
+
                       <div className="bg-white border-[3px] border-black rounded-2xl p-5 shadow-[5px_5px_0px_#000] space-y-4">
                         <div className="flex items-center justify-between pb-2 border-b-[2px] border-black">
                           <span className="font-black text-sm uppercase flex items-center">
@@ -533,7 +558,7 @@ export default function App() {
                       </div>
                     </div>
 
-                    {/* Key Decisions & Agreed Next Steps */}
+                    {/* Key Decisions & Next Steps */}
                     <div>
                       <div className="flex items-end pl-3">
                         <div className="h-4 w-32 bg-[#4ADE80] border-t-[2.5px] border-l-[2.5px] border-r-[2.5px] border-black rounded-t-lg" />
