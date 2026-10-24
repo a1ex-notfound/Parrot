@@ -313,13 +313,6 @@ export default function App() {
                               <span>⏳ {act.deadline}</span>
                             </div>
                           </div>
-                          <span className={`text-[10px] uppercase font-mono px-2 py-0.5 rounded font-bold ${
-                            act.priority === "High" 
-                              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20" 
-                              : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                          }`}>
-                            {act.priority}
-                          </span>
                         </div>
                       ))}
                     </div>
@@ -359,20 +352,6 @@ export default function App() {
                             />
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* Topics */}
-                  <div>
-                    <h3 className="text-xs uppercase font-mono tracking-wider text-zinc-400 mb-2 font-semibold">
-                      Indexed Topics
-                    </h3>
-                    <div className="flex flex-wrap gap-1.5">
-                      {activeMeeting.analysis?.topics?.map((topic, i) => (
-                        <span key={i} className="text-xs bg-zinc-800 border border-zinc-700/60 text-zinc-300 px-2.5 py-1 rounded-md">
-                          #{topic}
-                        </span>
                       ))}
                     </div>
                   </div>
