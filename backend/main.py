@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 import requests
 from faster_whisper import WhisperModel
 
-app = FastAPI(title="Parrot AI - Production Backend")
+app = FastAPI(title="Parrot AI - Pro Meeting Intelligence")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,7 +20,6 @@ app.add_middleware(
 )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(BASE_DIR)
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 DB_PATH = os.path.join(BASE_DIR, "meetings.db")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -28,10 +27,24 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 OLLAMA_URL = "http://127.0.0.1:11434/api/chat"
 OLLAMA_MODEL = "qwen2.5:7b"
 
-print(f">>> [Init] Local LLM Config: Ollama ({OLLAMA_MODEL})")
-print(">>> [Init] Loading Faster-Whisper base model on CPU...")
-whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
-print(">>> [Init] Faster-Whisper loaded successfully!")
+print("\n=======================================================")
+print("[*] Initializing Parrot Engine...")
+
+# Load Distil-Whisper with fallback to base
+try:
+    print("[*] Loading Distil-Whisper (distil-small.en)...")
+    whisper_model = WhisperModel("distil-small.en", device="cpu", compute_type="int8")
+    ASR_NAME = "Distil-Whisper"
+    print("[*] Distil-Whisper is READY!")
+except Exception as e:
+    print(f"[*] Distil-Whisper load skipped ({e}). Using base model...")
+    whisper_model = WhisperModel("base", device="cpu", compute_type="int8")
+    ASR_NAME = "Faster-Whisper"
+    print("[*] Base model is READY!")
+
+print(f"[*] Active ASR Engine : {ASR_NAME}")
+print(f"[*] Local LLM Target  : Ollama ({OLLAMA_MODEL})")
+print("=======================================================\n")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -53,49 +66,59 @@ def init_db():
 
 init_db()
 
-def query_local_ollama_qwen(transcript_text: str):
-    print(f">>> [Ollama] Analyzing transcript ({len(transcript_text)} chars) with {OLLAMA_MODEL}...")
+def calculate_speaker_talk_times(transcript):
+    speaker_durations = {}
+    for seg in transcript:
+        spk = seg.get("speaker", "Speaker 1")
+        dur = max(0.5, float(seg.get("end", 0)) - float(seg.get("start", 0)))
+        speaker_durations[spk] = speaker_durations.get(spk, 0.0) + dur
+    
+    total = sum(speaker_durations.values()) or 1.0
+    stats = []
+    for spk, d in sorted(speaker_durations.items()):
+        stats.append({
+            "speaker": spk,
+            "talk_percentage": max(1, round((d / total) * 100)),
+            "sentiment": "Engaged"
+        })
+    return stats
+
+def query_local_ollama_deep(transcript_text: str, computed_speakers: list):
+    print(f"\n>>> [Ollama] Analyzing meeting with {OLLAMA_MODEL} ({len(transcript_text)} chars)...")
+    speakers_hint = ", ".join([f"{s['speaker']} ({s['talk_percentage']}%)" for s in computed_speakers])
 
     prompt = f"""You are an executive meeting intelligence analyst.
-Analyze the following transcript thoroughly and extract true, context-aware information directly based on what the speakers actually discussed.
-Output strictly a valid JSON object matching this exact schema:
+Analyze the following transcript thoroughly. Extract rich, comprehensive, and context-accurate meeting intelligence.
+Identified Speakers: {speakers_hint}
 
+Return ONLY a valid JSON object matching this schema:
 {{
-  "executive_summary": "A cohesive 2-3 sentence overview explaining the central subject and what the speakers talked about.",
+  "executive_summary": "Rich 3-4 sentence narrative covering the primary agenda, discussions, and outcomes.",
+  "topics": ["4 to 6 relevant theme tags"],
   "key_takeaways": [
-    "Key observation or fact directly mentioned in the conversation",
-    "Another critical highlight from what was said",
-    "Additional core takeaway"
+    "At least 4 to 6 specific, factual observations directly mentioned in conversation"
   ],
   "action_items": [
     {{
-      "task": "Explicit follow-up task or project discussed",
-      "owner": "Specific speaker name or 'Team'",
-      "deadline": "Timeframe mentioned or 'TBD'",
+      "task": "Explicit follow-up task or deliverable",
+      "owner": "Specific speaker name or Team",
+      "deadline": "Clear timeframe or TBD",
       "priority": "High"
     }}
   ],
   "key_decisions": [
-    "Core decision, announcement, or agreed consensus from the talk"
+    "Confirmed strategic decision or consensus agreed upon"
   ],
   "agreed_next_steps": [
-    "Next immediate step or future plan mentioned by the speakers"
+    "Immediate operational next step"
   ],
-  "speaker_analytics": [
-    {{
-      "speaker": "Speaker 1",
-      "talk_percentage": 50,
-      "sentiment": "e.g., Enthusiastic, Decisive, Inquisitive, or Professional"
-    }},
-    {{
-      "speaker": "Speaker 2",
-      "talk_percentage": 50,
-      "sentiment": "e.g., Collaborative, Expressive, or Analytical"
-    }}
-  ]
+  "speaker_sentiments": {{
+    "Speaker 1": "e.g., Enthusiastic, Welcoming",
+    "Speaker 2": "e.g., Grateful, Expressive"
+  }}
 }}
 
-Transcript to analyze:
+Transcript:
 \"\"\"{transcript_text}\"\"\"
 """
 
@@ -104,17 +127,13 @@ Transcript to analyze:
         "format": "json",
         "stream": False,
         "messages": [
-            {
-                "role": "system",
-                "content": "You are a professional meeting analysis AI. Respond ONLY with a valid JSON object matching the requested schema."
-            },
+            {"role": "system", "content": "You are a professional meeting analysis AI. Respond ONLY with a valid JSON object."},
             {"role": "user", "content": prompt}
         ],
-        "options": {
-            "temperature": 0.2
-        }
+        "options": {"temperature": 0.2}
     }
 
+    parsed = {}
     try:
         res = requests.post(OLLAMA_URL, json=payload, timeout=180)
         if res.status_code == 200:
@@ -122,28 +141,37 @@ Transcript to analyze:
             match = re.search(r"\{.*\}", content, re.DOTALL)
             if match:
                 parsed = json.loads(match.group(0))
-                print(f">>> [Ollama] Meeting intelligence generated via {OLLAMA_MODEL}!")
-                return parsed
-        else:
-            print(f">>> [Ollama Error] HTTP {res.status_code}: {res.text}")
+                print(f">>> [Ollama Success] Intelligence generated via {OLLAMA_MODEL}!")
     except Exception as e:
-        print(f">>> [Ollama Connection Failed] Ensure Ollama is running. Error: {e}")
+        print(f">>> [Ollama Notice] {e}")
 
-    # Fallback directly extracted from real sentences if Ollama timed out
-    sentences = [s.strip() for s in re.split(r'[.!?]', transcript_text) if len(s.strip()) > 15]
-    return {
-        "executive_summary": " ".join(sentences[:3]) if sentences else "Conversation transcribed on-device.",
-        "key_takeaways": sentences[3:7] if len(sentences) >= 7 else ["On-device transcription completed."],
-        "action_items": [
-            {"task": "Review recorded meeting action points", "owner": "Team", "deadline": "This week", "priority": "High"}
-        ],
-        "key_decisions": ["Meeting transcribed and persisted in local database."],
-        "agreed_next_steps": ["Review extracted notes and action items."],
-        "speaker_analytics": [
-            {"speaker": "Speaker 1", "talk_percentage": 50, "sentiment": "Recorded"},
-            {"speaker": "Speaker 2", "talk_percentage": 50, "sentiment": "Recorded"}
-        ]
-    }
+    sentiments = parsed.get("speaker_sentiments", {})
+    final_analytics = []
+    for spk_stat in computed_speakers:
+        name = spk_stat["speaker"]
+        sentiment = sentiments.get(name, sentiments.get(name.split()[0], "Articulate"))
+        final_analytics.append({
+            "speaker": name,
+            "talk_percentage": spk_stat["talk_percentage"],
+            "sentiment": sentiment
+        })
+
+    if not parsed.get("executive_summary"):
+        sentences = [s.strip() for s in re.split(r'[.!?]', transcript_text) if len(s.strip()) > 10]
+        parsed["executive_summary"] = " ".join(sentences[:3]) if sentences else "Conversation transcribed on-device."
+    if not parsed.get("key_takeaways"):
+        parsed["key_takeaways"] = ["On-device transcription completed.", "Speaker dialogue indexed with timestamps."]
+    if not parsed.get("action_items"):
+        parsed["action_items"] = [{"task": "Review recorded conversation timestamps", "owner": "Team", "deadline": "This week", "priority": "High"}]
+    if not parsed.get("key_decisions"):
+        parsed["key_decisions"] = ["Meeting transcribed and persisted in local SQLite storage."]
+    if not parsed.get("agreed_next_steps"):
+        parsed["agreed_next_steps"] = ["Review extracted notes and action items."]
+    if not parsed.get("topics"):
+        parsed["topics"] = ["Meeting", "Strategy", "Discussion"]
+
+    parsed["speaker_analytics"] = final_analytics
+    return parsed
 
 @app.get("/api/meetings")
 def list_meetings():
@@ -189,7 +217,8 @@ def reanalyze_meeting(meeting_id: str):
         conn.close()
         raise HTTPException(status_code=400, detail="Transcript is empty")
 
-    analysis = query_local_ollama_qwen(full_text)
+    computed_speakers = calculate_speaker_talk_times(transcript)
+    analysis = query_local_ollama_deep(full_text, computed_speakers)
     c.execute("UPDATE meetings SET summary_json=? WHERE id=?", (json.dumps(analysis), meeting_id))
     conn.commit()
     conn.close()
@@ -214,6 +243,18 @@ def delete_meeting(meeting_id: str):
     conn.close()
     return {"success": True, "deleted_id": meeting_id}
 
+@app.delete("/api/meetings-clear-all")
+def clear_all_meetings():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM meetings")
+    conn.commit()
+    conn.close()
+    for f in os.listdir(UPLOAD_DIR):
+        try: os.remove(os.path.join(UPLOAD_DIR, f))
+        except: pass
+    return {"success": True}
+
 @app.get("/api/audio/{filename}")
 def stream_audio(filename: str):
     file_path = os.path.join(UPLOAD_DIR, filename)
@@ -233,9 +274,17 @@ async def upload_audio(file: UploadFile = File(...), title: Optional[str] = Form
     with open(file_path, "wb") as buf:
         buf.write(content)
 
-    print(f">>> Transcribing {safe_name} ({len(content)} bytes) via local Faster-Whisper...")
+    print(f"\n>>> [Upload] Transcribing {safe_name} ({len(content)} bytes)...")
     try:
-        segments, info = whisper_model.transcribe(file_path, beam_size=5)
+        # Safe transcription with fallback if VAD ONNX is missing
+        try:
+            segments_gen, info = whisper_model.transcribe(file_path, beam_size=5, vad_filter=True)
+            segments = list(segments_gen)
+        except Exception:
+            print(">>> [VAD Notice] Transcribing without VAD filter...")
+            segments_gen, info = whisper_model.transcribe(file_path, beam_size=5)
+            segments = list(segments_gen)
+
         transcript = [
             {"start": round(s.start, 2), "end": round(s.end, 2), "speaker": f"Speaker {(idx % 2) + 1}", "text": s.text.strip()}
             for idx, s in enumerate(segments)
@@ -246,11 +295,12 @@ async def upload_audio(file: UploadFile = File(...), title: Optional[str] = Form
         if os.path.exists(file_path):
             try: os.remove(file_path)
             except: pass
-        raise HTTPException(status_code=400, detail="Audio decoding failed. Please upload a valid MP3, WAV, or WebM audio.")
+        raise HTTPException(status_code=500, detail=f"Audio decoding error: {str(err)}")
 
     full_text = " ".join([s["text"] for s in transcript]) if transcript else "No speech detected."
-    print(f">>> Transcription complete ({duration_str}). Running Qwen 2.5 7B analysis...")
-    analysis = query_local_ollama_qwen(full_text)
+    print(f">>> [Transcription Done] Duration: {duration_str}. Words: {len(full_text.split())}")
+    computed_speakers = calculate_speaker_talk_times(transcript)
+    analysis = query_local_ollama_deep(full_text, computed_speakers)
 
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
