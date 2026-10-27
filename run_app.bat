@@ -1,6 +1,6 @@
-﻿@echo off
+@echo off
 setlocal enabledelayedexpansion
-title Parrot AI - Master Auto-Installer & Launcher
+title Parrot AI - Master Auto-Installer and Launcher
 
 echo ====================================================================
 echo           PARROT - 100%% Local Meeting Intelligence Suite
@@ -9,7 +9,7 @@ echo.
 
 cd /d "%~dp0"
 
-:: 1. Check Python
+REM 1. Check Python
 where python >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Python is not installed or not in your PATH.
@@ -18,7 +18,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 2. Check Node & NPM
+REM 2. Check Node and NPM
 where npm >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Node.js / NPM is not installed or not in your PATH.
@@ -27,7 +27,7 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 3. Check Ollama
+REM 3. Check Ollama
 where ollama >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Ollama is not installed or not in your PATH.
@@ -36,17 +36,17 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: 4. Verify/Setup Python Virtual Environment
+REM 4. Setup Python Virtual Environment
 if not exist "venv\Scripts\python.exe" (
-    echo [*] Creating Python virtual environment (venv)...
+    echo [*] Creating Python virtual environment [venv]...
     python -m venv venv
 )
 
-echo [*] Checking & Installing Python dependencies...
-.\venv\Scripts\python -m pip install --upgrade pip >nul 2>&1
-.\venv\Scripts\pip install -r requirements.txt
+echo [*] Checking and Installing Python dependencies...
+call .\venv\Scripts\python.exe -m pip install --upgrade pip >nul 2>&1
+call .\venv\Scripts\pip.exe install -r requirements.txt
 
-:: 5. Verify/Setup Frontend Dependencies
+REM 5. Setup Frontend Dependencies
 if not exist "frontend\node_modules\" (
     echo [*] Installing frontend npm dependencies...
     cd frontend
@@ -54,11 +54,11 @@ if not exist "frontend\node_modules\" (
     cd ..
 )
 
-:: 6. Check Ollama Service & Model Availability
+REM 6. Verify Ollama Service and Qwen Model
 echo [*] Verifying Ollama service...
 curl -s http://127.0.0.1:11434/api/tags >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [*] Starting Ollama in background...
+    echo [*] Starting Ollama server in background...
     start "Ollama Server" /min ollama serve
     timeout /t 3 /nobreak >nul
 )
@@ -68,12 +68,12 @@ ollama list | findstr /i "qwen2.5:7b" >nul 2>&1
 if %errorlevel% neq 0 (
     echo ====================================================================
     echo [*] Model 'qwen2.5:7b' not found locally.
-    echo [*] Downloading Qwen 2.5 7B (approx 4.7 GB). This only runs once...
+    echo [*] Downloading Qwen 2.5 7B. This only runs once...
     echo ====================================================================
     ollama pull qwen2.5:7b
 )
 
-:: 7. Launch Backend & Frontend
+REM 7. Launch Backend and Frontend
 echo.
 echo ====================================================================
 echo [*] Launching Parrot Backend on http://127.0.0.1:8000
