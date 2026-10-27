@@ -10,3 +10,5 @@ __pycache__/
 !.env.example
 backend/meetings.db
 backend/uploads/*
+
+!README.md
