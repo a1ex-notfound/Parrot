@@ -1,35 +1,22 @@
 ﻿@echo off
-title BlackBox AI - On-Device Intelligence
-color 06
-echo ========================================================
-echo       BLACKBOX AI: 100%% ON-DEVICE MEETING ENGINE
-echo ========================================================
-echo [1/3] Checking Python Backend environment...
-cd backend
-if not exist "venv" (
-    echo [*] Creating virtual environment...
-    python -m venv venv
-)
-call venv\Scripts\activate
-echo [*] Installing backend dependencies...
-pip install -r requirements.txt --quiet
-start cmd /k "title BlackBox AI Backend && call venv\Scripts\activate && uvicorn main:app --host 127.0.0.1 --port 8000 --reload"
-
-echo [2/3] Setting up React + Vite Frontend...
-cd ..\frontend
-if not exist "node_modules" (
-    echo [*] Installing Node packages...
-    call npm install
-)
-start cmd /k "title BlackBox AI Frontend && npm run dev"
-
-echo [3/3] Opening BlackBox AI in your browser...
-timeout /t 4 >nul
-start http://localhost:5173
+title BlackBox AI Launcher
+echo ===================================================
+echo           Starting BlackBox AI Suite
+echo ===================================================
 echo.
-echo ========================================================
-echo   BlackBox AI is up and running!
-echo   - Backend:  http://127.0.0.1:8000
-echo   - Frontend: http://localhost:5173
-echo ========================================================
-pause
+
+cd /d "%~dp0"
+
+echo [1/3] Launching FastAPI Backend on http://127.0.0.1:8000...
+start "BlackBox AI - Backend (Uvicorn)" cmd /k "title Backend && cd /d "%~dp0" && .\venv\Scripts\python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000"
+
+echo [2/3] Launching Vite Frontend on http://localhost:5173...
+start "BlackBox AI - Frontend (Vite)" cmd /k "title Frontend && cd /d "%~dp0frontend" && npm run dev"
+
+echo [3/3] Opening browser in 3 seconds...
+timeout /t 3 /nobreak >nul
+start http://localhost:5173
+
+echo.
+echo All services launched successfully!
+exit
