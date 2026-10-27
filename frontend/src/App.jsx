@@ -2,7 +2,7 @@
 import { 
   Play, Pause, Upload, CheckCircle2, 
   FileText, Trash2, ArrowRightCircle, ListChecks, Mic, Square, 
-  RefreshCw, UserCheck, Folder, Sparkles, Search, Copy, Check, Hash, Cpu, ShieldCheck
+  RefreshCw, UserCheck, Folder, Sparkles, Search, Copy, Check, Hash, Clock, ShieldCheck
 } from "lucide-react";
 
 export default function App() {
@@ -15,7 +15,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [processingStep, setProcessingStep] = useState("");
-  const [isReanalyzing, setIsReanalyzing] = useState(false);
+  const [countdownRemaining, setCountdownRemaining] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [copied, setCopied] = useState(false);
   
@@ -24,41 +24,14 @@ export default function App() {
 
   const audioRef = useRef(null);
   const fileInputRef = useRef(null);
-  const progressIntervalRef = useRef(null);
+  const pollingIntervalRef = useRef(null);
 
   useEffect(() => {
     fetchMeetings();
+    return () => {
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
+    };
   }, []);
-
-  const startProgressSimulation = () => {
-    setProcessingProgress(10);
-    setProcessingStep("1/3: Audio Decoding & VAD Silence Filtering...");
-
-    progressIntervalRef.current = setInterval(() => {
-      setProcessingProgress((prev) => {
-        if (prev < 40) {
-          setProcessingStep("1/3: Audio Decoding & Preprocessing...");
-          return prev + 5;
-        } else if (prev < 75) {
-          setProcessingStep("2/3: Distil-Whisper ASR Speech-to-Text & Diarization...");
-          return prev + 2;
-        } else if (prev < 92) {
-          setProcessingStep("3/3: Ollama Qwen 2.5 7B Executive Intelligence Synthesis...");
-          return prev + 1;
-        }
-        return prev;
-      });
-    }, 450);
-  };
-
-  const stopProgressSimulation = () => {
-    if (progressIntervalRef.current) {
-      clearInterval(progressIntervalRef.current);
-      progressIntervalRef.current = null;
-    }
-    setProcessingProgress(100);
-    setProcessingStep("Finalizing & Storing to Local SQLite...");
-  };
 
   const parseDurationStringToSeconds = (durStr) => {
     if (!durStr) return 0;
@@ -101,20 +74,114 @@ export default function App() {
     }
   };
 
-  const handleReanalyze = async () => {
-    if (!activeMeeting) return;
-    setIsReanalyzing(true);
+  // Robust Job Poller: Polls every 600ms without network drops
+  const pollJobStatus = (jobId) => {
+    pollingIntervalRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/jobs/${jobId}`);
+        if (!res.ok) return;
+
+        const job = await res.json();
+        if (job.progress !== undefined) setProcessingProgress(job.progress);
+        if (job.message) setProcessingStep(job.message);
+        if (job.eta_seconds !== undefined) setCountdownRemaining(job.eta_seconds);
+
+        if (job.status === "completed") {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+          setProcessingProgress(100);
+          setProcessingStep("Ready!");
+          setTimeout(() => {
+            setIsProcessing(false);
+            setProcessingProgress(0);
+          }, 400);
+          await fetchMeetings();
+          if (job.meeting_id) loadMeeting(job.meeting_id);
+        } else if (job.status === "failed") {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+          setIsProcessing(false);
+          alert("Processing failed: " + (job.error || "Unknown error"));
+        }
+      } catch (err) {
+        console.log("Waiting for next poll...");
+      }
+    }, 600);
+  };
+
+  const startJobSubmission = async (formData) => {
+    setIsProcessing(true);
+    setProcessingProgress(5);
+    setProcessingStep("Uploading audio to local engine...");
+    setCountdownRemaining(45);
+
     try {
-      const res = await fetch(`http://127.0.0.1:8000/api/meetings/${activeMeeting.id}/reanalyze`, {
-        method: "POST"
+      const res = await fetch("http://127.0.0.1:8000/api/upload", {
+        method: "POST",
+        body: formData,
       });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || "Upload failed");
+      }
+
       const data = await res.json();
-      if (!res.ok) throw new Error(data.detail || "Re-analysis failed");
-      setActiveMeeting({ ...activeMeeting, analysis: data.analysis });
+      if (!data.job_id) throw new Error("No job ID returned");
+      pollJobStatus(data.job_id);
     } catch (err) {
-      alert("Local AI re-analysis failed: " + err.message);
+      setIsProcessing(false);
+      alert("Submission error: " + err.message);
     } finally {
-      setIsReanalyzing(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("title", file.name.replace(/\.[^/.]+$/, ""));
+
+    await startJobSubmission(formData);
+  };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        const audioBlob = new Blob(chunks, { type: "audio/webm" });
+        const audioFile = new File([audioBlob], `mic_${Date.now()}.webm`, { type: "audio/webm" });
+
+        const formData = new FormData();
+        formData.append("file", audioFile);
+        formData.append("title", `Mic Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+
+        await startJobSubmission(formData);
+      };
+
+      recorder.start();
+      setMediaRecorder(recorder);
+      setIsRecording(true);
+    } catch (err) {
+      alert("Microphone access denied or not found.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.stop();
+      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
+      setIsRecording(false);
     }
   };
 
@@ -157,97 +224,6 @@ export default function App() {
     navigator.clipboard.writeText(md);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleFileUpload = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setIsProcessing(true);
-    startProgressSimulation();
-
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("title", file.name.replace(/\.[^/.]+$/, ""));
-
-    try {
-      const res = await fetch("http://127.0.0.1:8000/api/upload", {
-        method: "POST",
-        body: formData,
-      });
-      const text = await res.text();
-      let data;
-      try { data = JSON.parse(text); } catch { throw new Error(text || `Error ${res.status}`); }
-      if (!res.ok) throw new Error(data.detail || "Upload error");
-      stopProgressSimulation();
-      await fetchMeetings();
-      loadMeeting(data.id);
-    } catch (err) {
-      alert("Upload processing failed: " + err.message);
-    } finally {
-      setTimeout(() => {
-        setIsProcessing(false);
-        setProcessingProgress(0);
-      }, 500);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      const chunks = [];
-
-      recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data);
-      };
-
-      recorder.onstop = async () => {
-        const audioBlob = new Blob(chunks, { type: "audio/webm" });
-        const audioFile = new File([audioBlob], `mic_${Date.now()}.webm`, { type: "audio/webm" });
-        setIsProcessing(true);
-        startProgressSimulation();
-
-        const formData = new FormData();
-        formData.append("file", audioFile);
-        formData.append("title", `Mic Recording ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
-
-        try {
-          const res = await fetch("http://127.0.0.1:8000/api/upload", {
-            method: "POST",
-            body: formData,
-          });
-          const text = await res.text();
-          let data;
-          try { data = JSON.parse(text); } catch { throw new Error(text || "Server error"); }
-          if (!res.ok) throw new Error(data.detail || "Upload error");
-          stopProgressSimulation();
-          await fetchMeetings();
-          loadMeeting(data.id);
-        } catch (err) {
-          alert("Recording process error: " + err.message);
-        } finally {
-          setTimeout(() => {
-            setIsProcessing(false);
-            setProcessingProgress(0);
-          }, 500);
-        }
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-    } catch (err) {
-      alert("Microphone access denied or not found.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorder && isRecording) {
-      mediaRecorder.stop();
-      mediaRecorder.stream.getTracks().forEach((track) => track.stop());
-      setIsRecording(false);
-    }
   };
 
   const seekTo = (seconds) => {
@@ -301,12 +277,12 @@ export default function App() {
   return (
     <div className="h-screen w-screen bg-[#FEF08A] text-black font-sans selection:bg-black selection:text-[#FEF08A] p-3 md:p-4 flex flex-col overflow-hidden relative">
       
-      {/* Decorative Neo-Brutalist Background Shapes */}
+      {/* Decorative Background Elements */}
       <div className="absolute top-10 left-[-35px] w-28 h-28 rounded-full bg-[#F472B6] border-[3px] border-black -z-10 pointer-events-none" />
       <div className="absolute bottom-10 right-[-15px] w-40 h-52 rounded-3xl bg-[#C084FC] border-[3px] border-black -z-10 pointer-events-none" />
 
       {/* ========================================================= */}
-      {/* FULL-SCREEN NEO-BRUTALIST LIVE PROCESSING MODAL OVERLAY   */}
+      {/* ZERO-NETWORK-ERROR REAL-TIME PROGRESS MODAL               */}
       {/* ========================================================= */}
       {isProcessing && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -320,12 +296,17 @@ export default function App() {
                 </div>
                 <div>
                   <h3 className="font-black text-base uppercase tracking-tight">Processing Meeting Audio</h3>
-                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">100% On-Device AI Pipeline</p>
+                  <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Turbo Whisper + Qwen 2.5 7B</p>
                 </div>
               </div>
-              <span className="font-mono font-black text-sm bg-[#4ADE80] border-[2px] border-black px-2.5 py-1 rounded-lg shadow-[2px_2px_0px_#000]">
-                {processingProgress}%
-              </span>
+
+              {/* Server Calculated Accurate ETA */}
+              <div className="flex items-center space-x-1.5 bg-[#FEF08A] border-[2px] border-black px-2.5 py-1 rounded-xl shadow-[2px_2px_0px_#000]">
+                <Clock className="w-3.5 h-3.5 animate-spin" />
+                <span className="font-mono font-black text-xs">
+                  {countdownRemaining > 0 ? `~${formatSeconds(countdownRemaining)} left` : "Finalizing..."}
+                </span>
+              </div>
             </div>
 
             {/* Tactile Progress Bar */}
@@ -338,35 +319,38 @@ export default function App() {
                   <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(0,0,0,0.1)_25%,transparent_25%,transparent_50%,rgba(0,0,0,0.1)_50%,rgba(0,0,0,0.1)_75%,transparent_75%,transparent)] bg-[length:16px_16px] animate-[move-bg_1s_linear_infinite]" />
                 </div>
               </div>
-              <p className="font-mono font-bold text-xs text-black truncate flex items-center">
-                <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin text-zinc-700"/>
-                {processingStep}
-              </p>
+              <div className="flex justify-between items-center text-xs font-mono font-black">
+                <span className="text-zinc-800 truncate max-w-[340px] flex items-center">
+                  <RefreshCw className="w-3 h-3 mr-1 animate-spin text-black" />
+                  {processingStep}
+                </span>
+                <span>{processingProgress}%</span>
+              </div>
             </div>
 
-            {/* Pipeline Stage Indicators */}
+            {/* Live Pipeline Steps */}
             <div className="grid grid-cols-3 gap-2 text-center font-black text-[10px] uppercase">
               <div className={`p-2 rounded-xl border-[2px] border-black transition-all ${
-                processingProgress >= 20 ? "bg-[#DCFCE7] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
+                processingProgress >= 15 ? "bg-[#DCFCE7] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
               }`}>
-                {processingProgress >= 40 ? "✓ 1. Decoded" : "1. Decoding"}
+                {processingProgress >= 20 ? "✓ Decoded" : "1. Decoding"}
               </div>
               <div className={`p-2 rounded-xl border-[2px] border-black transition-all ${
-                processingProgress >= 40 ? "bg-[#FEF08A] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
+                processingProgress >= 20 ? "bg-[#FEF08A] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
               }`}>
-                {processingProgress >= 80 ? "✓ 2. Transcribed" : "2. Whisper ASR"}
+                {processingProgress >= 78 ? "✓ Transcribed" : "2. Turbo Whisper"}
               </div>
               <div className={`p-2 rounded-xl border-[2px] border-black transition-all ${
-                processingProgress >= 80 ? "bg-[#F472B6] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
+                processingProgress >= 78 ? "bg-[#F472B6] shadow-[2px_2px_0px_#000]" : "bg-zinc-100 text-zinc-400"
               }`}>
-                {processingProgress >= 100 ? "✓ 3. Complete" : "3. Qwen 2.5 AI"}
+                {processingProgress >= 98 ? "✓ Complete" : "3. Qwen AI"}
               </div>
             </div>
 
-            {/* Zero-Leakage Guarantee */}
+            {/* Privacy Guarantee */}
             <div className="bg-[#F8FAFC] border-[2px] border-black rounded-xl p-2.5 flex items-center space-x-2 text-[11px] font-bold text-zinc-700">
               <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0" />
-              <span>Audio is staying on-device. Zero cloud transmission.</span>
+              <span>Multi-threaded CPU execution. Zero cloud packets sent.</span>
             </div>
 
           </div>
@@ -430,7 +414,7 @@ export default function App() {
           </h2>
           <div className="flex items-center space-x-2">
             <span className="bg-white border-[2px] border-black rounded-lg px-2.5 py-1 text-[11px] font-black uppercase shadow-[2px_2px_0px_#000]">
-              Distil-Whisper ASR
+              Turbo Whisper ASR
             </span>
             <span className="bg-[#4ADE80] border-[2px] border-black rounded-lg px-2.5 py-1 text-[11px] font-black uppercase shadow-[2px_2px_0px_#000]">
               Ollama Qwen 2.5 7B
@@ -667,16 +651,6 @@ export default function App() {
                   <div className="flex flex-col h-full min-h-0">
                     <div className="flex items-end justify-between pl-3 pr-1 flex-shrink-0">
                       <div className="h-2.5 w-28 bg-[#F472B6] border-t-[2px] border-l-[2px] border-r-[2px] border-black rounded-t-lg" />
-                      
-                      <button
-                        onClick={handleReanalyze}
-                        disabled={isReanalyzing}
-                        className="bg-black text-[#FDE047] hover:bg-zinc-800 border-[2px] border-black px-2 py-0.5 rounded-t-md font-black text-[9px] uppercase flex items-center space-x-1 tracking-wider shadow-[2px_0px_0px_#000]"
-                        title="Re-run deep Qwen analysis"
-                      >
-                        <RefreshCw className={`w-2.5 h-2.5 ${isReanalyzing ? "animate-spin" : ""}`} />
-                        <span>{isReanalyzing ? "Analyzing..." : "Re-run Qwen AI"}</span>
-                      </button>
                     </div>
 
                     <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-2.5">
